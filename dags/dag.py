@@ -11,7 +11,6 @@ from airflow.providers.common.sql.operators.sql import SQLExecuteQueryOperator
 from sqlalchemy import text
 
 
-
 config = {
     'ft_balance_f' : {
         'keys' : ['on_date', 'account_rk'],
@@ -109,6 +108,42 @@ def load_data(table, pk_columns=None, mode='upsert', **kwargs):
     except Exception as e:
         log_etl_event(table, start_time, task_id, status='FAILED', error=e)
         raise
+
+
+def init_history_2017(**kwargs):
+    start_time = datetime.now()
+    task_id = kwargs['ti'].task_id
+    entity_name = 'dm.dm_account_balance_f_history'
+    pg_hook = PostgresHook(postgres_conn_id='postgres_conn')
+
+    try:
+        check_sql = "SELECT COUNT(*) FROM dm.dm_account_balance_f WHERE on_date = '2017-12-31'"
+        count = pg_hook.get_first(check_sql)[0]
+
+        if count == 0:
+            insert_sql = """
+                INSERT INTO dm.dm_account_balance_f (on_date, account_rk, balance_out, balance_out_rub)
+                SELECT 
+                    fbf.on_date, fbf.account_rk, fbf.balance_out,
+                    fbf.balance_out * COALESCE(merd.reduced_cource, 1)
+                FROM ds.ft_balance_f fbf 
+                LEFT JOIN ds.md_account_d mad 
+                    ON fbf.account_rk = mad.account_rk 
+                    AND fbf.on_date BETWEEN mad.data_actual_date AND mad.data_actual_end_date
+                LEFT JOIN ds.md_exchange_rate_d merd  
+                    ON mad.currency_rk = merd.currency_rk 
+                    AND fbf.on_date BETWEEN merd.data_actual_date AND merd.data_actual_end_date
+                WHERE fbf.on_date = '2017-12-31';
+            """
+            pg_hook.run(insert_sql)
+            new_count = pg_hook.get_first(check_sql)[0]
+            log_etl_event(entity_name, start_time, task_id, rows=new_count, status='SUCCESS')
+        else:
+            log_etl_event(entity_name, start_time, task_id, rows=0, status='SUCCESS')
+
+    except Exception as e:
+        log_etl_event(entity_name, start_time, task_id, status='FAILED', error=e)
+        raise e
 
 
 def export_f101_to_csv(**kwargs):
@@ -209,6 +244,12 @@ insert_md_ledger_account_s = PythonOperator(
                'mode': config['md_ledger_account_s']['mode']},
     dag=dag
 )
+
+task_init_history = PythonOperator(
+    task_id='init_history_2017',
+    python_callable=init_history_2017
+)
+
 
 task_turnover = SQLExecuteQueryOperator(
     task_id='fill_turnover_monthly',
@@ -322,6 +363,7 @@ task_export_csv = PythonOperator(
     >> insert_md_currency_d
     >> insert_md_exchange_rate_d
     >> insert_md_ledger_account_s
+    >> task_init_history
     >> task_turnover
     >> task_balance
     >> task_f101
