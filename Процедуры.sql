@@ -96,63 +96,72 @@ END;
 $$;
 
 
-CREATE OR REPLACE PROCEDURE dm.fill_f101_round_f(i_on_date date)
+CREATE OR REPLACE PROCEDURE dm.fill_f101_round_f(i_on_date DATE)
 LANGUAGE plpgsql
 AS $$
 DECLARE
-    v_start_date DATE := date_trunc('month', i_on_date);
-    v_end_date DATE := (date_trunc('month', i_on_date) + INTERVAL '1 month - 1 day');
-    v_prev_date DATE := (v_start_date - INTERVAL '1 day');
+	v_start_date DATE := date_trunc('month', i_on_date - INTERVAL '1 day');
+	v_end_date DATE := (i_on_date  - INTERVAL '1 day');
+	v_out_date DATE := (v_start_date - INTERVAL '1 day');
 BEGIN
 
-    DELETE FROM dm.dm_f101_round_f WHERE from_date = v_start_date AND to_date = v_end_date;
+	DELETE FROM dm.dm_f101_round_f WHERE from_date = v_start_date AND to_date = v_end_date;
 
-    INSERT INTO dm.dm_f101_round_f (
-        from_date, to_date, chapter, ledger_account, characteristic,
-        balance_in_rub, balance_in_val, balance_in_total,
-        turn_deb_rub, turn_deb_val, turn_deb_total,
-        turn_cre_rub, turn_cre_val, turn_cre_total,
-        balance_out_rub, balance_out_val, balance_out_total
-    )
-    SELECT
-        v_start_date,
-        v_end_date,
-        mlas.chapter,
-        SUBSTR(mad.account_number, 1, 5) as ledger_account,
-        mad.char_type,
-
-        SUM(CASE WHEN mad.currency_code IN ('810', '643') THEN COALESCE(bal_in.balance_out_rub, 0) ELSE 0 END) as balance_in_rub,
-        SUM(CASE WHEN mad.currency_code NOT IN ('810', '643') THEN COALESCE(bal_in.balance_out_rub, 0) ELSE 0 END) as balance_in_val,
-        SUM(COALESCE(bal_in.balance_out_rub, 0)) as balance_in_total,
-
-        SUM(CASE WHEN mad.currency_code IN ('810', '643') THEN COALESCE(t.debet_amount_rub, 0) ELSE 0 END) as turn_deb_rub,
-        SUM(CASE WHEN mad.currency_code NOT IN ('810', '643') THEN COALESCE(t.debet_amount_rub, 0) ELSE 0 END) as turn_deb_val,
-        SUM(COALESCE(t.debet_amount_rub, 0)) as turn_deb_total,
-        SUM(CASE WHEN mad.currency_code IN ('810', '643') THEN COALESCE(t.credit_amount_rub, 0) ELSE 0 END) as turn_cre_rub,
-        SUM(CASE WHEN mad.currency_code NOT IN ('810', '643') THEN COALESCE(t.credit_amount_rub, 0) ELSE 0 END) as turn_cre_val,
-        SUM(COALESCE(t.credit_amount_rub, 0)) as turn_cre_total,
-
-        SUM(CASE WHEN mad.currency_code IN ('810', '643') THEN COALESCE(bal_out.balance_out_rub, 0) ELSE 0 END) as balance_out_rub,
-        SUM(CASE WHEN mad.currency_code NOT IN ('810', '643') THEN COALESCE(bal_out.balance_out_rub, 0) ELSE 0 END) as balance_out_val,
-        SUM(COALESCE(bal_out.balance_out_rub, 0)) as balance_out_total
-    FROM ds.md_account_d mad
-    JOIN ds.md_ledger_account_s mlas
-        ON SUBSTR(mad.account_number, 1, 5) = mlas.ledger_account::text
-    LEFT JOIN dm.dm_account_balance_f bal_in
-        ON mad.account_rk = bal_in.account_rk AND bal_in.on_date = v_prev_date
-    LEFT JOIN dm.dm_account_balance_f bal_out
-        ON mad.account_rk = bal_out.account_rk AND bal_out.on_date = v_end_date
-    LEFT JOIN (
+	INSERT INTO dm.dm_f101_round_f (
+		from_date,
+		to_date,
+		chapter,
+		ledger_account,
+		characteristic,
+		balance_in_rub,
+		balance_in_val,
+		balance_in_total,
+		turn_deb_rub,
+		turn_deb_val,
+		turn_deb_total,
+		turn_cre_rub,
+		turn_cre_val,
+		turn_cre_total,
+		balance_out_rub,
+		balance_out_val,
+		balance_out_total
+	)
+	SELECT
+		v_start_date,
+		v_end_date,
+		mlas.chapter,
+		substr(mad.account_number, 1, 5) as ledger_account,
+		mad.char_type,
+		COALESCE(SUM(CASE WHEN mad.currency_code IN ('810', '643') THEN dabf_in.balance_out_rub ELSE 0 END), 0) as balance_in_rub,
+        COALESCE(SUM(CASE WHEN mad.currency_code NOT IN ('810', '643') THEN dabf_in.balance_out_rub ELSE 0 END), 0) as balance_in_val,
+        COALESCE(SUM(dabf_in.balance_out_rub), 0) as balance_in_total,
+        COALESCE(SUM(CASE WHEN mad.currency_code IN ('810', '643') THEN t.debet_amount_rub ELSE 0 END), 0) as turn_deb_rub,
+        COALESCE(SUM(CASE WHEN mad.currency_code NOT IN ('810', '643') THEN t.debet_amount_rub ELSE 0 END), 0) as turn_deb_val,
+        COALESCE(SUM(t.debet_amount_rub), 0) as turn_deb_total,
+        COALESCE(SUM(CASE WHEN mad.currency_code IN ('810', '643') THEN t.credit_amount_rub ELSE 0 END), 0) as turn_cre_rub,
+        COALESCE(SUM(CASE WHEN mad.currency_code NOT IN ('810', '643') THEN t.credit_amount_rub ELSE 0 END), 0) as turn_cre_val,
+        COALESCE(SUM(t.credit_amount_rub), 0) as turn_cre_total,
+        COALESCE(SUM(CASE WHEN mad.currency_code IN ('810', '643') THEN dabf_out.balance_out_rub ELSE 0 END), 0) as balance_out_rub,
+        COALESCE(SUM(CASE WHEN mad.currency_code NOT IN ('810', '643') THEN dabf_out.balance_out_rub ELSE 0 END), 0) as balance_out_val,
+        COALESCE(SUM(dabf_out.balance_out_rub), 0) as balance_out_total
+        FROM ds.md_account_d mad
+        JOIN ds.md_ledger_account_s mlas ON substr(mad.account_number, 1, 5) = mlas.ledger_account::text
+		LEFT JOIN dm.dm_account_balance_f dabf_in
+        ON mad.account_rk = dabf_in.account_rk AND dabf_in.on_date = v_out_date
+        LEFT JOIN dm.dm_account_balance_f dabf_out
+        ON mad.account_rk = dabf_out.account_rk AND dabf_out.on_date = v_end_date
+        LEFT JOIN (
         SELECT account_rk,
                SUM(debet_amount_rub) as debet_amount_rub,
                SUM(credit_amount_rub) as credit_amount_rub
         FROM dm.dm_account_turnover_f
         WHERE on_date BETWEEN v_start_date AND v_end_date
         GROUP BY account_rk
-    ) t ON mad.account_rk = t.account_rk
-    WHERE v_end_date BETWEEN mad.data_actual_date AND mad.data_actual_end_date
-    GROUP BY mlas.chapter, SUBSTR(mad.account_number, 1, 5), mad.char_type;
-END;
+        ) t ON mad.account_rk = t.account_rk
+        WHERE v_end_date BETWEEN mad.data_actual_date AND mad.data_actual_end_date
+    	GROUP BY mlas.chapter, substr(mad.account_number, 1, 5), mad.char_type;
+	END;
 $$;
+
 
 
